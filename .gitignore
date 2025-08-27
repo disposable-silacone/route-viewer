@@ -1,0 +1,103 @@
+########################
+# OS / Editor junk
+########################
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.code-workspace
+
+########################
+# Environment / secrets
+########################
+.env
+.env.*
+
+########################
+# Logs
+########################
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+########################
+# Node / Frontend
+########################
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.vite/
+coverage/
+.eslintcache
+*.tsbuildinfo
+
+########################
+# Python
+########################
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+########################
+# App data / caches
+########################
+.cache/
+cache/
+tmp/
+temp/
+backend/.data/
+*.db
+
+########################
+# GraphHopper / OSM data (large)
+########################
+# Prebuilt graph caches
+graphs/
+
+# OSM extracts
+**/*.osm.pbf
+
+# GraphHopper JAR and large data files
+map-matching.jar
+**/map-matching.jar
+state_shapes.*
+
+# GH working caches (if present)
+graphhopper/cache/
+
+########################
+# GeoJSON cache (generated at runtime)
+########################
+**/cache/geojson/
+
+########################
+# Misc
+########################
+*.bak
+*.tmp
+~$*
+
