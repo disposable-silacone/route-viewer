@@ -146,7 +146,7 @@ def ingest(req: IngestRequest) -> dict:
                     "id": act_id,
                     "name": parsed_track.name or f.stem,
                     "type": parsed_track.activity_type,
-                })
+                }, timestamps=parsed_track.timestamps)
 
                 activity = Activity(
                     id=act_id,

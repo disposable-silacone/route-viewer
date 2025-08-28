@@ -103,6 +103,22 @@ export const MapPage: React.FC = () => {
   const [gpsAcc, setGpsAcc] = useState<number | ''>('')
   const [showSnapDebug, setShowSnapDebug] = useState(false)
   const [allTypes, setAllTypes] = useState<string[]>([])
+  
+  // Helper function to get default GPS accuracy based on activity type
+  const getDefaultGpsAccuracy = (activityType: string): number => {
+    const type = activityType.toLowerCase()
+    if (type === 'run' || type === 'walk' || type === 'hike') return 5
+    if (type === 'ride' || type === 'bike' || type === 'cycling') return 8
+    if (type === 'swim') return 10
+    return 8 // default
+  }
+  
+  // Update GPS accuracy when activity type changes
+  useEffect(() => {
+    if (type && gpsAcc === '') {
+      setGpsAcc(getDefaultGpsAccuracy(type))
+    }
+  }, [type, gpsAcc])
   useEffect(() => {
     let cancelled = false
     async function loadAllTypes() {
@@ -138,7 +154,11 @@ export const MapPage: React.FC = () => {
           const gjRes = await fetch(`${API_BASE}/activities/${a.id}/geojson`)
           if (!gjRes.ok) continue
           const fc = await gjRes.json()
-          if (fc?.features?.length) raws.push(...fc.features)
+          if (fc?.features?.length) {
+            // Only include LineString features (the route), not Point features (GPS markers)
+            const lineFeatures = fc.features.filter((f: any) => f?.geometry?.type === 'LineString')
+            raws.push(...lineFeatures)
+          }
           try {
             const coords = fc?.features?.[0]?.geometry?.coordinates as [number,number][] | undefined
             if (coords && coords.length) {
@@ -324,7 +344,7 @@ export const MapPage: React.FC = () => {
             if (selectedIds.size === 0) return
             const ids = Array.from(selectedIds)
             try {
-              const body: any = { ids, profile: (type==='run'||type==='walk') ? 'foot' : 'bike' }
+                             const body: any = { ids, profile: 'foot' }  // Try foot profile for better road prioritization
               if (gpsAcc !== '') body.gpsAccuracy = gpsAcc
               const res = await fetch(`${API_BASE}/mapmatch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
               const js = await res.json()
@@ -392,9 +412,9 @@ const SelectionOverlay: React.FC<{ openByDefault?: boolean, activities: Activity
   const toggleSort = (k: typeof sortKey) => {
     if (k === sortKey) setSortAsc(!sortAsc); else { setSortKey(k); setSortAsc(true) }
   }
-  return (
-    <div style={{ position: 'absolute', right: 10, top: 60, zIndex: 1000 }}>
-      <button className="btn" onClick={() => setOpen(!open)}>{open ? 'Hide Panel' : 'Show Panel'}</button>
+     return (
+     <div style={{ position: 'absolute', left: 10, bottom: 10, zIndex: 1000 }}>
+       <button className="btn" onClick={() => setOpen(!open)}>{open ? 'Hide Panel' : 'Show Panel'}</button>
       {open && (
         <div className="panel drawer" style={{ marginTop: 8, display: 'flex', flexDirection: 'column' }}>
           <div className="drawer-header">
@@ -416,7 +436,21 @@ const SelectionOverlay: React.FC<{ openByDefault?: boolean, activities: Activity
             </select>
             <input className="field" type='number' placeholder='Min m' value={controls.minDist as any} onChange={(e)=>controls.setMinDist(e.target.value===''?'':Number(e.target.value))} style={{ width:100 }} />
             <input className="field" type='number' placeholder='Max m' value={controls.maxDist as any} onChange={(e)=>controls.setMaxDist(e.target.value===''?'':Number(e.target.value))} style={{ width:100 }} />
-            <input className="field" type='number' placeholder='GPS acc m' value={controls.gpsAcc as any} onChange={(e)=>controls.setGpsAcc(e.target.value===''?'':Number(e.target.value))} style={{ width:110 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input 
+                className="field" 
+                type='number' 
+                placeholder='GPS acc m' 
+                value={controls.gpsAcc as any} 
+                onChange={(e)=>controls.setGpsAcc(e.target.value===''?'':Number(e.target.value))} 
+                style={{ width:110 }} 
+              />
+              {controls.gpsAcc !== '' && (
+                <span style={{ fontSize: '12px', color: '#666' }}>
+                  {controls.gpsAcc <= 5 ? 'High' : controls.gpsAcc <= 8 ? 'Medium' : 'Low'} precision
+                </span>
+              )}
+            </div>
             <label className="field"><input type='checkbox' checked={controls.showSnapDebug} onChange={(e)=>controls.setShowSnapDebug(e.target.checked)} /> Show snapped points</label>
             <button className="btn" onClick={controls.onExport}>Export</button>
             <button className="btn btn-primary" onClick={controls.onMatch}>Map Match</button>

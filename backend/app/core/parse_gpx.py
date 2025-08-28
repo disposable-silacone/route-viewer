@@ -17,6 +17,7 @@ class ParsedTrack:
     distance_m: int
     elev_gain_m: int | None
     coordinates: list[tuple[float, float]]  # (lon, lat)
+    timestamps: list[datetime] | None = None
 
 
 def parse_gpx_file(path: Path) -> ParsedTrack | None:
@@ -25,6 +26,7 @@ def parse_gpx_file(path: Path) -> ParsedTrack | None:
     if not gpx.tracks:
         return None
     points: list[tuple[float, float]] = []
+    timestamps: list[datetime] = []
     distances_m = 0.0
     start: datetime | None = None
     end: datetime | None = None
@@ -47,19 +49,26 @@ def parse_gpx_file(path: Path) -> ParsedTrack | None:
                 if p.longitude is None or p.latitude is None:
                     continue
                 points.append((float(p.longitude), float(p.latitude)))
-                if prev_lon is not None and prev_lat is not None:
-                    distances_m += _haversine_m(prev_lon, prev_lat, float(p.longitude), float(p.latitude))
-                prev_lon, prev_lat = float(p.longitude), float(p.latitude)
+                
+                # Collect timestamp if available
                 if p.time:
                     t = p.time
                     if t.tzinfo is None:
                         t = t.replace(tzinfo=timezone.utc)
                     else:
                         t = t.astimezone(timezone.utc)
+                    timestamps.append(t)
                     if start is None or t < start:
                         start = t
                     if end is None or t > end:
                         end = t
+                else:
+                    # If no timestamp, add None to maintain alignment
+                    timestamps.append(None)
+                
+                if prev_lon is not None and prev_lat is not None:
+                    distances_m += _haversine_m(prev_lon, prev_lat, float(p.longitude), float(p.latitude))
+                prev_lon, prev_lat = float(p.longitude), float(p.latitude)
 
     if start is None or end is None or not points:
         return None
@@ -75,6 +84,7 @@ def parse_gpx_file(path: Path) -> ParsedTrack | None:
         distance_m=int(distances_m),
         elev_gain_m=None,
         coordinates=points,
+        timestamps=timestamps if any(t is not None for t in timestamps) else None,
     )
 
 

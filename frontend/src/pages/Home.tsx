@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
 export const Home: React.FC = () => {
-  const [sourceUri, setSourceUri] = useState('')
+  const [sourceUri, setSourceUri] = useState('C:\\Users\\danie\\Downloads\\AmandaEarlyRawData\\SmallSet')
   const [result, setResult] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<string>('')
