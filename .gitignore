@@ -72,6 +72,10 @@ temp/
 backend/.data/
 *.db
 
+# Backend generated directories
+backend/.cache/
+backend/exports/
+
 ########################
 # GraphHopper / OSM data (large)
 ########################
@@ -80,11 +84,6 @@ graphs/
 
 # OSM extracts
 **/*.osm.pbf
-
-# GraphHopper JAR and large data files
-map-matching.jar
-**/map-matching.jar
-state_shapes.*
 
 # GH working caches (if present)
 graphhopper/cache/
