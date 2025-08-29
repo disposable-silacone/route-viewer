@@ -18,6 +18,10 @@ type Activity = {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
+// Session-scoped handle to a user-chosen export directory (File System Access API)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let exportDirHandle: any | null = null
+
 const FitToFeatures: React.FC<{ features: any[] }> = ({ features }) => {
   const map = useMap()
   const lastKeyRef = useRef<string | null>(null)
@@ -331,14 +335,58 @@ export const MapPage: React.FC = () => {
           onExport: async () => {
             if (selectedIds.size === 0) return
             const ids = Array.from(selectedIds)
-            const res = await fetch(`${API_BASE}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, format: 'geojson' }) })
+            // Request backend SVG export of matched lines only. Backend will also
+            // save a copy to the last ingest path under /exports/snapped.svg
+            const res = await fetch(`${API_BASE}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, format: 'svg', include: 'matched' }) })
+            if (!res.ok) { alert('Export failed'); return }
+            const serverPath = res.headers.get('X-Export-Path') || ''
             const blob = await res.blob()
+
+            // If supported, let the user choose a folder once (preferably the ingest folder)
+            // and save directly there on subsequent exports without changing the folder.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const w: any = window as any
+            if (w.showDirectoryPicker) {
+              try {
+                if (!exportDirHandle) {
+                  // Ask the user to pick a folder (choose your ingest folder to make it the default)
+                  exportDirHandle = await w.showDirectoryPicker()
+                }
+                const fileHandle = await exportDirHandle.getFileHandle('snapped.svg', { create: true })
+                const writable = await fileHandle.createWritable()
+                await writable.write(blob)
+                await writable.close()
+                if (serverPath) alert(`Saved to chosen folder and also to:\n${serverPath}`)
+                return
+              } catch {
+                // User may cancel or deny; fall back to Save As / download
+              }
+            }
+
+            // Otherwise, prefer a Save As dialog when available
+            if (w.showSaveFilePicker) {
+              try {
+                const handle = await w.showSaveFilePicker({
+                  suggestedName: 'snapped.svg',
+                  types: [{ description: 'SVG', accept: { 'image/svg+xml': ['.svg'] } }]
+                })
+                const writable = await handle.createWritable()
+                await writable.write(blob)
+                await writable.close()
+                if (serverPath) alert(`Saved. A copy was also written to:\n${serverPath}`)
+                return
+              } catch {
+                // fall through to regular download if user cancels
+              }
+            }
+            // Fallback: normal browser download
             const url = URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            a.download = 'export.geojson'
+            a.download = 'snapped.svg'
             a.click()
             URL.revokeObjectURL(url)
+            if (serverPath) alert(`A copy was written to:\n${serverPath}`)
           },
           onMatch: async () => {
             if (selectedIds.size === 0) return
