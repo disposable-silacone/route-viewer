@@ -29,6 +29,6 @@ graphhopper:
 server:
   application_connectors:
     - type: http
-      port: 8989
+      port: 8988
 
 

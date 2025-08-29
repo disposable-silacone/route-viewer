@@ -18,6 +18,10 @@ type Activity = {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
+// Session-scoped handle to a user-chosen export directory (File System Access API)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let exportDirHandle: any | null = null
+
 const FitToFeatures: React.FC<{ features: any[] }> = ({ features }) => {
   const map = useMap()
   const lastKeyRef = useRef<string | null>(null)
@@ -103,6 +107,22 @@ export const MapPage: React.FC = () => {
   const [gpsAcc, setGpsAcc] = useState<number | ''>('')
   const [showSnapDebug, setShowSnapDebug] = useState(false)
   const [allTypes, setAllTypes] = useState<string[]>([])
+  
+  // Helper function to get default GPS accuracy based on activity type
+  const getDefaultGpsAccuracy = (activityType: string): number => {
+    const type = activityType.toLowerCase()
+    if (type === 'run' || type === 'walk' || type === 'hike') return 5
+    if (type === 'ride' || type === 'bike' || type === 'cycling') return 8
+    if (type === 'swim') return 10
+    return 8 // default
+  }
+  
+  // Update GPS accuracy when activity type changes
+  useEffect(() => {
+    if (type && gpsAcc === '') {
+      setGpsAcc(getDefaultGpsAccuracy(type))
+    }
+  }, [type, gpsAcc])
   useEffect(() => {
     let cancelled = false
     async function loadAllTypes() {
@@ -138,7 +158,11 @@ export const MapPage: React.FC = () => {
           const gjRes = await fetch(`${API_BASE}/activities/${a.id}/geojson`)
           if (!gjRes.ok) continue
           const fc = await gjRes.json()
-          if (fc?.features?.length) raws.push(...fc.features)
+          if (fc?.features?.length) {
+            // Only include LineString features (the route), not Point features (GPS markers)
+            const lineFeatures = fc.features.filter((f: any) => f?.geometry?.type === 'LineString')
+            raws.push(...lineFeatures)
+          }
           try {
             const coords = fc?.features?.[0]?.geometry?.coordinates as [number,number][] | undefined
             if (coords && coords.length) {
@@ -311,20 +335,64 @@ export const MapPage: React.FC = () => {
           onExport: async () => {
             if (selectedIds.size === 0) return
             const ids = Array.from(selectedIds)
-            const res = await fetch(`${API_BASE}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, format: 'geojson' }) })
+            // Request backend SVG export of matched lines only. Backend will also
+            // save a copy to the last ingest path under /exports/snapped.svg
+            const res = await fetch(`${API_BASE}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, format: 'svg', include: 'matched' }) })
+            if (!res.ok) { alert('Export failed'); return }
+            const serverPath = res.headers.get('X-Export-Path') || ''
             const blob = await res.blob()
+
+            // If supported, let the user choose a folder once (preferably the ingest folder)
+            // and save directly there on subsequent exports without changing the folder.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const w: any = window as any
+            if (w.showDirectoryPicker) {
+              try {
+                if (!exportDirHandle) {
+                  // Ask the user to pick a folder (choose your ingest folder to make it the default)
+                  exportDirHandle = await w.showDirectoryPicker()
+                }
+                const fileHandle = await exportDirHandle.getFileHandle('snapped.svg', { create: true })
+                const writable = await fileHandle.createWritable()
+                await writable.write(blob)
+                await writable.close()
+                if (serverPath) alert(`Saved to chosen folder and also to:\n${serverPath}`)
+                return
+              } catch {
+                // User may cancel or deny; fall back to Save As / download
+              }
+            }
+
+            // Otherwise, prefer a Save As dialog when available
+            if (w.showSaveFilePicker) {
+              try {
+                const handle = await w.showSaveFilePicker({
+                  suggestedName: 'snapped.svg',
+                  types: [{ description: 'SVG', accept: { 'image/svg+xml': ['.svg'] } }]
+                })
+                const writable = await handle.createWritable()
+                await writable.write(blob)
+                await writable.close()
+                if (serverPath) alert(`Saved. A copy was also written to:\n${serverPath}`)
+                return
+              } catch {
+                // fall through to regular download if user cancels
+              }
+            }
+            // Fallback: normal browser download
             const url = URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            a.download = 'export.geojson'
+            a.download = 'snapped.svg'
             a.click()
             URL.revokeObjectURL(url)
+            if (serverPath) alert(`A copy was written to:\n${serverPath}`)
           },
           onMatch: async () => {
             if (selectedIds.size === 0) return
             const ids = Array.from(selectedIds)
             try {
-              const body: any = { ids, profile: (type==='run'||type==='walk') ? 'foot' : 'bike' }
+                             const body: any = { ids, profile: 'foot' }  // Try foot profile for better road prioritization
               if (gpsAcc !== '') body.gpsAccuracy = gpsAcc
               const res = await fetch(`${API_BASE}/mapmatch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
               const js = await res.json()
@@ -392,9 +460,9 @@ const SelectionOverlay: React.FC<{ openByDefault?: boolean, activities: Activity
   const toggleSort = (k: typeof sortKey) => {
     if (k === sortKey) setSortAsc(!sortAsc); else { setSortKey(k); setSortAsc(true) }
   }
-  return (
-    <div style={{ position: 'absolute', right: 10, top: 60, zIndex: 1000 }}>
-      <button className="btn" onClick={() => setOpen(!open)}>{open ? 'Hide Panel' : 'Show Panel'}</button>
+     return (
+     <div style={{ position: 'absolute', left: 10, bottom: 10, zIndex: 1000 }}>
+       <button className="btn" onClick={() => setOpen(!open)}>{open ? 'Hide Panel' : 'Show Panel'}</button>
       {open && (
         <div className="panel drawer" style={{ marginTop: 8, display: 'flex', flexDirection: 'column' }}>
           <div className="drawer-header">
@@ -416,7 +484,21 @@ const SelectionOverlay: React.FC<{ openByDefault?: boolean, activities: Activity
             </select>
             <input className="field" type='number' placeholder='Min m' value={controls.minDist as any} onChange={(e)=>controls.setMinDist(e.target.value===''?'':Number(e.target.value))} style={{ width:100 }} />
             <input className="field" type='number' placeholder='Max m' value={controls.maxDist as any} onChange={(e)=>controls.setMaxDist(e.target.value===''?'':Number(e.target.value))} style={{ width:100 }} />
-            <input className="field" type='number' placeholder='GPS acc m' value={controls.gpsAcc as any} onChange={(e)=>controls.setGpsAcc(e.target.value===''?'':Number(e.target.value))} style={{ width:110 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input 
+                className="field" 
+                type='number' 
+                placeholder='GPS acc m' 
+                value={controls.gpsAcc as any} 
+                onChange={(e)=>controls.setGpsAcc(e.target.value===''?'':Number(e.target.value))} 
+                style={{ width:110 }} 
+              />
+              {controls.gpsAcc !== '' && (
+                <span style={{ fontSize: '12px', color: '#666' }}>
+                  {controls.gpsAcc <= 5 ? 'High' : controls.gpsAcc <= 8 ? 'Medium' : 'Low'} precision
+                </span>
+              )}
+            </div>
             <label className="field"><input type='checkbox' checked={controls.showSnapDebug} onChange={(e)=>controls.setShowSnapDebug(e.target.checked)} /> Show snapped points</label>
             <button className="btn" onClick={controls.onExport}>Export</button>
             <button className="btn btn-primary" onClick={controls.onMatch}>Map Match</button>

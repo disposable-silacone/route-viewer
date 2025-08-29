@@ -58,6 +58,7 @@ def parse_fit_file(path: Path) -> Optional[ParsedTrack]:
     fit = FitFile(str(path))
 
     points: list[tuple[float, float]] = []  # (lon, lat)
+    timestamps: list[datetime] = []
     start: Optional[datetime] = None
     end: Optional[datetime] = None
     last_distance_m: Optional[float] = None
@@ -94,10 +95,13 @@ def parse_fit_file(path: Path) -> Optional[ParsedTrack]:
         try:
             ts = _normalize_dt(msg.get_value("timestamp"))
             if ts is not None:
+                timestamps.append(ts)
                 if start is None or ts < start:
                     start = ts
                 if end is None or ts > end:
                     end = ts
+            else:
+                timestamps.append(None)
 
             lon = _semicircles_to_deg(msg.get_value("position_long"))
             lat = _semicircles_to_deg(msg.get_value("position_lat"))
@@ -138,6 +142,7 @@ def parse_fit_file(path: Path) -> Optional[ParsedTrack]:
         distance_m=int(last_distance_m or 0),
         elev_gain_m=None,
         coordinates=points,
+        timestamps=timestamps if any(t is not None for t in timestamps) else None,
     )
 
 

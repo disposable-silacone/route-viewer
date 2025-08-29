@@ -47,6 +47,10 @@ PROGRESS: dict = {
     "current": None,
 }
 
+# Remember the most recent ingest source directory so other endpoints
+# (e.g., export) can write outputs adjacent to the user's data.
+LAST_SOURCE_DIR: Path | None = None
+
 
 @router.get("/progress")
 def get_progress() -> dict:
@@ -97,6 +101,10 @@ def ingest(req: IngestRequest) -> dict:
         "current": None,
     })
 
+    # Persist where the user pointed ingest so exports can write nearby
+    global LAST_SOURCE_DIR
+    LAST_SOURCE_DIR = path if path.is_dir() else path.parent
+
     with SessionLocal() as db:
         candidates = []
         if path.is_file():
@@ -146,7 +154,7 @@ def ingest(req: IngestRequest) -> dict:
                     "id": act_id,
                     "name": parsed_track.name or f.stem,
                     "type": parsed_track.activity_type,
-                })
+                }, timestamps=parsed_track.timestamps)
 
                 activity = Activity(
                     id=act_id,
