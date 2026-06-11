@@ -32,7 +32,7 @@ def _export_geojson(req: ExportRequest) -> Response:
     with SessionLocal() as db:
         for act_id in req.ids:
             row = db.get(Activity, act_id)
-            if not row:
+            if not row or not row.geojson_path:
                 continue
             p = Path(row.geojson_path)
             if req.variant == "matched":
@@ -65,7 +65,7 @@ def _export_svg(req: ExportRequest) -> Response:
     with SessionLocal() as db:
         for act_id in req.ids:
             row = db.get(Activity, act_id)
-            if not row:
+            if not row or not row.geojson_path:
                 continue
             p = Path(row.geojson_path)
             if include == "matched":

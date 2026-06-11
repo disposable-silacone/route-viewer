@@ -267,7 +267,7 @@ def map_match(req: MapMatchRequest) -> dict:
     with SessionLocal() as db:
         for act_id in req.ids:
             row = db.get(Activity, act_id)
-            if not row:
+            if not row or not row.geojson_path:
                 failed += 1
                 continue
             raw_path = Path(row.geojson_path)

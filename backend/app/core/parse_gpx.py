@@ -22,6 +22,10 @@ class ParsedTrack:
 
 def parse_gpx_file(path: Path) -> ParsedTrack | None:
     text = path.read_text(encoding="utf-8", errors="ignore")
+    return parse_gpx_text(text)
+
+
+def parse_gpx_text(text: str) -> ParsedTrack | None:
     gpx = gpxpy.parse(text)
     if not gpx.tracks:
         return None

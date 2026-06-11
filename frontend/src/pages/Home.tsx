@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
 export const Home: React.FC = () => {
+  const [customerId, setCustomerId] = useState('amanda')
   const [sourceUri, setSourceUri] = useState('C:\\Users\\danie\\Downloads\\AmandaEarlyRawData\\SmallSet')
   const [result, setResult] = useState<string>('')
   const [loading, setLoading] = useState(false)
@@ -39,7 +40,7 @@ export const Home: React.FC = () => {
       const res = await fetch(`${API_BASE}/ingest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sourceUri })
+        body: JSON.stringify({ sourceUri, customerId })
       })
       const json = await res.json()
       setResult(JSON.stringify(json, null, 2))
@@ -55,7 +56,15 @@ export const Home: React.FC = () => {
   return (
     <div style={{ maxWidth: 900, margin: '40px auto', fontFamily: 'system-ui, sans-serif' }}>
       <h1>Route Viewer</h1>
-      <p>Enter a local path to a folder or .zip and click Ingest.</p>
+      <p>Enter a customer ID, a local path to a folder, .zip, or activity file (.gpx, .fit, .tcx, .gpx.gz, .fit.gz, .tcx.gz), then click Ingest.</p>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <input
+          style={{ width: 180, padding: 8 }}
+          placeholder="customer id (e.g. amanda)"
+          value={customerId}
+          onChange={(e) => setCustomerId(e.target.value)}
+        />
+      </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <input
           style={{ flex: 1, padding: 8 }}
@@ -63,7 +72,7 @@ export const Home: React.FC = () => {
           value={sourceUri}
           onChange={(e) => setSourceUri(e.target.value)}
         />
-        <button onClick={handleIngest} disabled={loading || !sourceUri}>
+        <button onClick={handleIngest} disabled={loading || !sourceUri || !customerId}>
           {loading ? 'Ingesting…' : 'Ingest'}
         </button>
         <Link to="/map">

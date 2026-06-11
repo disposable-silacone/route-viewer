@@ -11,6 +11,8 @@ router = APIRouter()
 @router.get("")
 def list_activities(
     type: str | None = Query(None),
+    customer_id: str | None = Query(None),
+    region_id: str | None = Query(None),
     start: str | None = Query(None),
     end: str | None = Query(None),
     minDist: int | None = Query(None),
@@ -21,12 +23,16 @@ def list_activities(
         conditions = []
         if type:
             conditions.append(Activity.activity_type == type)
+        if customer_id:
+            conditions.append(Activity.customer_id == customer_id)
+        if region_id:
+            conditions.append(Activity.region_id == region_id)
         if start:
             from datetime import datetime
-            conditions.append(Activity.start_time_utc >= datetime.fromisoformat(start))
+            conditions.append(Activity.started_at >= datetime.fromisoformat(start))
         if end:
             from datetime import datetime
-            conditions.append(Activity.end_time_utc <= datetime.fromisoformat(end))
+            conditions.append(Activity.started_at <= datetime.fromisoformat(end))
         if minDist is not None:
             conditions.append(Activity.distance_m >= int(minDist))
         if maxDist is not None:
@@ -34,17 +40,19 @@ def list_activities(
         if conditions:
             stmt = stmt.where(and_(*conditions))
 
-        rows = db.execute(stmt.order_by(Activity.start_time_utc.asc())).scalars().all()
+        rows = db.execute(stmt.order_by(Activity.started_at.asc())).scalars().all()
         return [
             {
-                "id": r.id,
+                "id": r.activity_id,
+                "customer_id": r.customer_id,
                 "name": r.name,
-                "source_file": Path(r.source_path).name if r.source_path else None,
+                "source_file": Path(r.raw_file_path).name if r.raw_file_path else None,
                 "type": r.activity_type,
-                "start": r.start_time_utc.isoformat() if r.start_time_utc else None,
-                "end": r.end_time_utc.isoformat() if r.end_time_utc else None,
+                "region_id": r.region_id,
+                "start": r.started_at.isoformat() if r.started_at else None,
                 "distance_m": r.distance_m,
-                "duration_sec": r.duration_sec,
+                "duration_sec": r.duration_s,
+                "match_status": r.match_status,
                 "bbox": [float(x) for x in r.bbox.split(",")] if r.bbox else None,
             }
             for r in rows
@@ -57,17 +65,15 @@ def get_activity_geojson(activity_id: str, variant: str | None = Query(None)) ->
         row = db.get(Activity, activity_id)
         if not row:
             raise HTTPException(status_code=404, detail="Not found")
+        if not row.geojson_path:
+            raise HTTPException(status_code=404, detail="geojson path not set")
         import json
-        from pathlib import Path
         base = Path(row.geojson_path)
         p = base
         if variant == "matched":
             p = base.with_name(base.stem + "_matched.json")
         if not p.exists():
-            # fallback to raw if matched not present
             p = base
         if not p.exists():
             raise HTTPException(status_code=404, detail="geojson not found")
         return json.loads(p.read_text(encoding="utf-8"))
-
-

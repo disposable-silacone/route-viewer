@@ -55,7 +55,16 @@ def _map_sport_to_type(sport: Optional[str], sub_sport: Optional[str]) -> Option
 
 
 def parse_fit_file(path: Path) -> Optional[ParsedTrack]:
-    fit = FitFile(str(path))
+    return _parse_fit(FitFile(str(path)))
+
+
+def parse_fit_bytes(data: bytes) -> Optional[ParsedTrack]:
+    import io
+
+    return _parse_fit(FitFile(io.BytesIO(data)))
+
+
+def _parse_fit(fit: FitFile) -> Optional[ParsedTrack]:
 
     points: list[tuple[float, float]] = []  # (lon, lat)
     timestamps: list[datetime] = []
