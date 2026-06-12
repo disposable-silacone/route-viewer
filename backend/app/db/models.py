@@ -161,6 +161,8 @@ class Activity(Base):
         String(32), nullable=False, default="pending"
     )
     match_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    matched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    match_diagnostics: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )

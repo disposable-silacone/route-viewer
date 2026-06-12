@@ -12,6 +12,7 @@ from app.api.routes_mapmatch import router as mapmatch_router
 from app.api.routes_inspect import router as inspect_router
 from app.api.routes_regions import router as regions_router
 from app.api.routes_catalog import router as catalog_router
+from app.api.routes_customers import router as customers_router
 from app.db.migrate import bootstrap_database
 
 
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(inspect_router, prefix="/inspect", tags=["inspect"])
     app.include_router(regions_router, prefix="/regions", tags=["regions"])
     app.include_router(catalog_router, prefix="/catalog", tags=["catalog"])
+    app.include_router(customers_router, prefix="/customers", tags=["customers"])
 
     @app.on_event("startup")
     def _create_tables() -> None:

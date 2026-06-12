@@ -75,8 +75,8 @@ export const Home: React.FC = () => {
         <button onClick={handleIngest} disabled={loading || !sourceUri || !customerId}>
           {loading ? 'Ingesting…' : 'Ingest'}
         </button>
-        <Link to="/map">
-          <button>View on Map</button>
+        <Link to="/qa">
+          <button>Activity QA</button>
         </Link>
       </div>
       {progress && (

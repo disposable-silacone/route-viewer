@@ -1,5 +1,5 @@
 graphhopper:
-  datareader.file: "C:\\Users\\danie\\OneDrive\\Desktop\\Training Line Prints\\Route-Viewer\\graphhopper\\pbf\\pennsylvania-latest.osm.pbf"
+  datareader.file: "./pbf/pennsylvania-latest.osm.pbf"
   graph.location:  "./graphs/PA"
   graph.encoded_values: road_class,osm_way_id
   import.osm.ignored_highways: motorway,trunk

@@ -108,10 +108,9 @@ class SpatiaLiteBackend(SpatialBackend):
 
 
 def geometry_to_wkt(element: WKBElement | None) -> str | None:
-    """Convert a GeoAlchemy WKBElement to WKT via SpatiaLite function name."""
+    """Convert a GeoAlchemy WKBElement to WKT."""
     if element is None:
         return None
-    # Shapely is already a project dependency; keep decoding out of SQL dialect code.
-    from shapely import wkb
+    from geoalchemy2.shape import to_shape
 
-    return wkb.loads(bytes(element.data)).wkt
+    return to_shape(element).wkt

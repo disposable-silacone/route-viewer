@@ -1,34 +1,56 @@
 # Route Viewer
 
-A local web application for ingesting GPS activity files (GPX and FIT), visualizing routes on an interactive map, snapping them to the road network via [GraphHopper](https://www.graphhopper.com/) map-matching, and exporting the results as GeoJSON or SVG.
+A local web application for ingesting GPS activity files, building a **global OpenStreetMap street catalog** by geographic tiles, map-matching activities to canonical **segment IDs**, and visualizing/exporting route usage — not overlapping per-activity polylines.
 
-Built for the FinishLine project to review and refine GPS tracks from Garmin and similar devices before producing route line prints.
+Built for the **FinishLine** project: multiple map **customers** share OSM catalog work when geography overlaps; each customer's activities are stored separately.
 
-## What It Does
+## What It Does Today
 
-1. **Ingest** — Scan a local folder (or single file) for `.gpx` and `.fit` activity files, parse track points and metadata, deduplicate by content signature, and store activities in a SQLite database with cached GeoJSON.
-2. **View** — Browse ingested activities on a Leaflet map with filters (activity type, distance range), toggle raw vs. map-matched ("snapped") routes, and select routes via checkboxes or a rectangle draw tool.
-3. **Map-match** — Send selected activities to a GraphHopper map-matching server to snap GPS traces onto OpenStreetMap roads. The backend auto-detects which US state an activity is in (PA, NY, NJ, FL) and routes to the correct regional GraphHopper instance.
-4. **Export** — Download selected routes as merged GeoJSON or as a single SVG file (saved both to the browser and to an `exports/` folder next to the ingest source).
+1. **Ingest** — Parse `.gpx`, `.fit`, `.tcx` (and `.gz` / `.zip` archives) for a **customer ID**. Persist activities in SQLite + SpatiaLite, cluster into **regions** (~10 km), register required **catalog tiles** (5 km grid). Does **not** wipe the DB on re-ingest.
+2. **Catalog coverage** — Report which OSM catalog tiles a customer's activity geometry requires and whether each tile is `pending` / `ready`. OSM **build worker not implemented yet**.
+3. **View** — Leaflet map with per-activity raw/snapped GeoJSON (legacy flow).
+4. **Map-match** — GraphHopper snap to roads (legacy per-activity GeoJSON; does **not** yet write `activity_segment_usage`).
+5. **Export** — GeoJSON or SVG from selected activities (legacy flow).
 
-## Architecture
+## Target Architecture (in progress)
+
+FinishLine is moving from **per-activity polylines** to **segment-centric** storage:
 
 ```
-route-viewer/
-├── frontend/          React + Vite + Leaflet UI (port 5173)
-├── backend/           FastAPI Python API (port 8000)
-├── graphhopper/       Per-state GraphHopper map-matching server configs
-└── start_graphhopper_servers.bat   Launches all GH servers
+Customer ingest  →  activities (per customer)
+                 →  catalog_tiles (global coverage gate)
+                 →  OSM build per tile  →  network_segments (global)
+                 →  map-match  →  activity_segment_usage + segment_stats
+                 →  map viz / export by segment usage counts
 ```
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| Frontend (Vite) | 5173 | React SPA |
-| Backend (FastAPI) | 8000 | REST API |
-| GraphHopper PA | 8989 | Pennsylvania road network |
-| GraphHopper NY | 8988 | New York road network |
-| GraphHopper NJ | 8987 | New Jersey road network |
-| GraphHopper FL | 8986 | Florida road network |
+**Three geographic layers** (do not confuse them):
+
+| Layer | Purpose | Shared across customers? |
+|-------|---------|--------------------------|
+| **Regions** | UI grouping, ~10 km activity clusters | Yes (global `regions` table) |
+| **Catalog tiles** | OSM build unit, coverage gate | Yes (global `catalog_tiles`) |
+| **Network segments** | Canonical street geometry + stable IDs | Yes (global `network_segments`) |
+
+**Critical rule:** `region_id` does **not** mean OSM catalog is ready. Coverage = all **catalog tiles** touched by the customer's activity geometry have `status = ready`.
+
+---
+
+## Git Branch Strategy (June 2026)
+
+Active development is on:
+
+```
+feat/catalog-tiles-multi-customer-ingest
+```
+
+- `master` = last merged stable state (pre segment-centric work).
+- Feature branch is pushed to `origin`; **no PR yet** — merge to `master` when the full milestone is done (OSM build + segment map-match + viz).
+- Solo dev workflow: commit and push on the feature branch; merge locally when ready.
+
+Latest milestone commit message: *Add multi-customer ingest, geospatial schema, and catalog tile coverage.*
+
+---
 
 ## Quick Start
 
@@ -36,25 +58,32 @@ route-viewer/
 
 - Python 3.10+
 - Node.js 18+
-- Java 17+ (for GraphHopper)
-- GraphHopper `map-matching.jar` and per-state `.osm.pbf` extracts (not included in repo; see `graphhopper/` configs for expected paths)
+- Java 17+ (for GraphHopper map-matching)
+- **SpatiaLite** — Windows: download [mod_spatialite](https://www.gaia-gis.it/gaia-sins/windows-bin-x64/) and set `SPATIALITE_EXTENSION` to the full path of `mod_spatialite.dll` (all DLLs in the same folder).
+- GraphHopper `map-matching.jar` and per-state `.osm.pbf` extracts (see `graphhopper/`; not in repo).
 
-### 1. Start GraphHopper servers
+### 1. Start GraphHopper (optional, for map-match)
 
 ```bat
 start_graphhopper_servers.bat
 ```
 
-Or start individual servers manually (see [MAPMATCH_IMPROVEMENTS.md](MAPMATCH_IMPROVEMENTS.md) for details).
-
 ### 2. Start the backend
+
+```powershell
+$env:SPATIALITE_EXTENSION = "C:\path\to\mod_spatialite.dll"
+cd backend
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+On startup, `bootstrap_database()` runs: SpatiaLite init, ORM tables, SQL migrations (`backend/migrations/*.sql`).
+
+Initialize manually if needed:
 
 ```bash
 cd backend
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python scripts/init_db.py
 ```
 
 ### 3. Start the frontend
@@ -65,137 +94,282 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173, enter a local folder path containing GPX/FIT files, click **Ingest**, then **View on Map**.
+Open http://localhost:5173. Enter a **customer ID** and local folder path, click **Ingest**.
 
-### Environment Variables
+### Check catalog coverage (browser or Swagger)
+
+```
+http://localhost:8000/catalog/coverage?customerId=YOUR_CUSTOMER
+http://localhost:8000/docs
+```
+
+---
+
+## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VITE_API_BASE` | `http://localhost:8000` | Backend URL (frontend) |
-| `VITE_ORIGIN` | `http://localhost:5173` | Allowed CORS origin (backend) |
-| `VITE_TILE_URL` | OpenStreetMap tiles | Basemap tile URL (frontend) |
-| `DATA_CACHE_DIR` | `%LOCALAPPDATA%/RouteViewer/cache` | GeoJSON cache directory |
-| `DB_PATH` | `.data/app.db` | SQLite database path |
+| `VITE_ORIGIN` | `http://localhost:5173` | CORS origin (backend) |
+| `DB_PATH` | `.data/app.db` | SQLite database file |
+| `SPATIAL_BACKEND` | `spatialite` | `spatialite` or `postgis` (stub) |
+| `SPATIALITE_EXTENSION` | `mod_spatialite` | **Required on Windows** — full path to DLL |
+| `DATA_CACHE_DIR` | `%LOCALAPPDATA%/RouteViewer/cache` | Cache root; GeoJSON at `{cache}/geojson/{customerId}/` |
+| `REGION_CLUSTER_KM` | `10` | Region clustering distance at ingest |
+| `CATALOG_TILE_KM` | `5` | Catalog tile size (use `2.5` for finer grid) |
+| `CATALOG_ACTIVITY_BUFFER_KM` | `0.5` | Buffer around activity geometry before tiling |
+| `CATALOG_FETCH_MARGIN_M` | `350` | Extra margin on tile bbox for OSM fetch (edge continuity) |
+| `CATALOG_VERSION` | `1` | Catalog build rules version (stored on tiles) |
+| `CATALOG_TILE_SCHEME_VERSION` | `v1` | Grid scheme version (encoded in `tile_scheme`) |
 | `GRAPHOPPER_BASE_URL` | `http://localhost:8989` | Default GH URL (inspect endpoint) |
 
 ---
 
-## File Reference
+## Development Notes — What Was Built (June 2026)
 
-### Root
+This section is the handoff doc if chat context is lost. See also [backend/SCHEMA.md](backend/SCHEMA.md).
 
-| File | Description |
-|------|-------------|
-| `package.json` | Root-level npm manifest with shared Leaflet Draw dependencies. |
-| `package-lock.json` | Lockfile for root npm dependencies. |
-| `.gitignore` | Ignores node_modules, Python caches, `.env`, SQLite DBs, OSM PBF files, GraphHopper graph caches, and generated export/cache directories. |
-| `start_graphhopper_servers.bat` | Windows batch script that launches four GraphHopper map-matching servers (PA, NY, NJ, FL) in separate terminal windows. |
-| `MAPMATCH_IMPROVEMENTS.md` | Technical notes on map-matching enhancements: timestamp-aware GPX generation, activity-type GPS accuracy defaults, excursion cleanup, multi-state GraphHopper routing, and logging. |
+### 1. Multi-customer persistent ingest
 
-### Backend (`backend/`)
+**Before:** Each ingest wiped the entire DB and GeoJSON cache.
 
-#### Entry Point
+**Now:**
 
-| File | Description |
-|------|-------------|
-| `requirements.txt` | Python dependencies: FastAPI, Uvicorn, SQLAlchemy, gpxpy, fitparse, Shapely, NumPy. |
-| `app/main.py` | FastAPI application factory. Configures CORS, creates data directories, registers all API routers, and initializes the SQLite schema on startup. |
-| `app/__init__.py` | Package marker. |
+- Ingest requires `customerId` (and optional `customerName`) in `POST /ingest`.
+- Activities are **upserted** per customer; only that customer's stale rows (not in current batch) are removed.
+- GeoJSON cache: `{DATA_CACHE_DIR}/geojson/{customerId}/{activity_id}.json`
+- Uniqueness: `(customer_id, hash_sig)` — same activity content can exist under different customers.
+- Legacy rows without `customer_id` were backfilled to customer `_legacy` via migration bootstrap.
 
-#### API Routes (`backend/app/api/`)
+**Content hash** (`hash_sig`): SHA1 of rounded start time, rounded distance, activity type, and bbox.
 
-| File | Endpoint(s) | Description |
-|------|-------------|-------------|
-| `routes_health.py` | `GET /healthz` | Health check; reports configured GraphHopper base URL. |
-| `routes_ingest.py` | `POST /ingest`, `GET /ingest/progress` | Scans a local folder or file for GPX/FIT files, parses tracks, deduplicates by hash signature, writes GeoJSON cache files, and stores `Activity` records. Resets the database on each ingest. Exposes in-process progress polling. |
-| `routes_activities.py` | `GET /activities`, `GET /activities/{id}/geojson` | Lists activities with optional filters (type, date range, distance). Returns raw or `matched` variant GeoJSON for a given activity. |
-| `routes_export.py` | `POST /export` | Exports selected activities as merged GeoJSON or SVG. SVG export projects lon/lat to a pixel canvas and also writes `snapped.svg` to `{ingest_source}/exports/`. |
-| `routes_mapmatch.py` | `POST /mapmatch` | Sends activity tracks to GraphHopper's `/match` endpoint. Auto-detects state from coordinates, builds timestamp-aware GPX, applies GPS accuracy defaults by activity type, and saves `*_matched.json` GeoJSON alongside the raw cache file. |
-| `routes_inspect.py` | `GET /inspect` | Debug endpoint: given a lat/lon, queries GraphHopper for the nearest road edge and samples candidate snap points in a radius. Returns a GeoJSON FeatureCollection for map overlay. |
-| `__init__.py` | — | Package marker. |
+**Activity ID:** `act_{sha1(customerId|hash_sig)[:32]}` — see `backend/app/db/segment_ids.py`.
 
-#### Core Logic (`backend/app/core/`)
+**Supported ingest paths:** `.gpx`, `.fit`, `.tcx`, `.gpx.gz`, `.fit.gz`, `.tcx.gz`, folders, `.zip` — see `backend/app/core/ingest_paths.py`.
 
-| File | Description |
-|------|-------------|
-| `parse_gpx.py` | Parses GPX files via `gpxpy`. Extracts coordinates, timestamps, activity type, distance (haversine), and duration. Returns a `ParsedTrack` dataclass. |
-| `parse_fit.py` | Parses Garmin FIT files via `fitparse`. Converts semicircle coordinates, maps sport/sub-sport to activity types (run, ride, walk, swim), and returns a `ParsedTrack`. |
-| `geojson.py` | Writes a LineString GeoJSON FeatureCollection to disk, optionally embedding per-point timestamp/elevation metadata as additional Point features. |
-| `walker.py` | Recursively walks a directory tree and yields `.gpx` and `.fit` file paths. |
-| `storage.py` | Defines a `StorageProvider` protocol and `LocalStorageProvider` for filesystem access (supports `file://` URIs and zip detection). Prepared for future archive support; not yet wired into ingest. |
+### 2. Geospatial schema (SpatiaLite)
 
-#### Database (`backend/app/db/`)
+Tables in `backend/app/db/models.py`:
 
-| File | Description |
-|------|-------------|
-| `models.py` | SQLAlchemy `Activity` model: id, source path/format, activity type, name, timestamps, distance, elevation, GeoJSON cache path, bounding box, content hash, and ingest timestamp. |
-| `session.py` | Creates the SQLite engine and `SessionLocal` factory. Database path configurable via `DB_PATH` env var. |
+| Table | Role |
+|-------|------|
+| `customers` | Map clients |
+| `regions` | ~10 km activity clusters (UI / grouping) |
+| `catalog_tiles` | Global 5 km OSM build cells + status |
+| `network_segments` | Global canonical OSM segment geometry |
+| `activities` | One row per run, FK to `customer_id` + `region_id` |
+| `activity_segment_usage` | `(activity_id, segment_id)` traversals — **empty until map-match refactor** |
+| `segment_stats` | Aggregated per-segment counts — **empty until Task 6** |
 
-#### Tests
+Spatial SQL is isolated in `backend/app/db/spatial/` (SpatiaLite + PostGIS stub).
 
-| File | Description |
-|------|-------------|
-| `test_mapmatch_improvements.py` | Placeholder test file (currently empty). Intended for tests covering GPS accuracy defaults, excursion cleanup, and timestamp-aware GPX generation. |
+**Migrations** (`backend/migrations/`):
 
-### Frontend (`frontend/`)
+| File | Purpose |
+|------|---------|
+| `001_initial_schema.sql` | Indexes for activities / segment_stats |
+| `002_customers.sql` | `customers` table |
+| `003_drop_hash_sig_global_unique.sql` | Drop legacy global unique on `hash_sig` |
+| `004_catalog_tiles.sql` | `catalog_tiles` table |
 
-#### Config & Build
+Bootstrap also runs `_drop_global_hash_sig_uniqueness` and `_backfill_legacy_customer_id` in `backend/app/db/migrate.py`.
 
-| File | Description |
-|------|-------------|
-| `package.json` | Frontend dependencies: React 18, Vite, Leaflet, react-leaflet, leaflet-draw, axios, react-router-dom. |
-| `package-lock.json` | npm lockfile. |
-| `vite.config.ts` | Vite config with React plugin; dev server on port 5173. |
-| `tsconfig.json` | TypeScript compiler options for the app source. |
-| `tsconfig.node.json` | TypeScript config for Vite/Node tooling files. |
-| `index.html` | HTML shell; mounts the React app at `#root`. |
+### 3. Region clustering (Task 2 — done)
 
-#### Source (`frontend/src/`)
+At ingest:
 
-| File | Description |
-|------|-------------|
-| `main.tsx` | React entry point. Renders `<App />` in StrictMode and imports Leaflet/Draw CSS. |
-| `pages/App.tsx` | Top-level router with routes for `/` (Home) and `/map` (MapPage). |
-| `pages/Home.tsx` | Ingest page. Accepts a local folder path, POSTs to `/ingest`, polls `/ingest/progress` for live status, and links to the map view. |
-| `pages/MapPage.tsx` | Main map interface. Loads activities and GeoJSON from the API, renders raw (orange) and snapped (blue) routes on a Leaflet map, provides a control panel for filtering, selection (checkbox or rectangle draw), map-matching, SVG export, and snap-debug inspection on map click. |
-| `styles/ui.css` | Shared UI styles: CSS variables, panel/toolbar/button/field classes, and drawer layout for the activity list. |
+1. Parse all files → `ActivityDraft` with centroid + bbox.
+2. Greedy cluster by centroid (`REGION_CLUSTER_KM`, default 10 km).
+3. Merge clusters that share the same `region_id` (2 dp centroid grid).
+4. Upsert `regions` row; assign each activity a `region_id`.
 
-### GraphHopper (`graphhopper/`)
+**Region ID:** `reg_{sha1(round(lat,2), round(lon,2))[:12]}`  
+**Region name:** e.g. `40.59°N, 75.52°W` (display only)
 
-| File | Description |
-|------|-------------|
-| `config_PA.yaml` | GraphHopper config for Pennsylvania. Points to a PA OSM PBF extract, stores graph cache in `./graphs/PA`, defines foot/bike/car profiles, listens on port **8989**. |
-| `config_NY.yaml` | New York config. Port **8988**, graph cache `./graphs/NY`. |
-| `config_NJ.yaml` | New Jersey config. Port **8987**, graph cache `./graphs/NJ`. |
-| `config_FL.yaml` | Florida config. Port **8986**, graph cache `./graphs/FL`. |
+API: `GET /regions`
 
-Each config ignores motorway/trunk highways during import, encodes `road_class` and `osm_way_id` for debug overlays, and uses custom speed models per profile. OSM PBF file paths are machine-specific and must be updated before first use.
+Regions are **not** used for catalog coverage checks.
 
-> **Note:** `map-matching.jar`, OSM `.pbf` extracts, and prebuilt `graphs/` directories are not tracked in git (see `.gitignore`). You must download/build these separately.
+### 4. Catalog tiles + coverage (Task 3 — done)
+
+**Tile math:** `backend/app/core/catalog_tiles.py`
+
+- Fixed lat/lon grid, ~5 km cells (`CATALOG_TILE_KM`).
+- **Tile scheme:** `latlon-5000m-v1` (includes size so 2.5 km grid stays distinct).
+- **Tile ID:** `tile_{scheme}_{lat_idx}_{lon_idx}` e.g. `tile_latlon-5000m-v1_2907_1767`.
+- Each tile has **core bbox** (5 km) and **fetch_bbox** (core + `CATALOG_FETCH_MARGIN_M`).
+- Required tiles computed from **buffered activity geometry** (v1: buffered route bbox; corridor buffer planned later).
+
+**At ingest:** All tiles touched by activity coordinates are registered in `catalog_tiles` as `pending` (unless already `ready` / `building`).
+
+**Readiness:** A tile is covered when `catalog_tiles.status == 'ready'`. `segment_count` is **diagnostic only** (some tiles legitimately have few segments).
+
+**APIs:**
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /catalog/coverage?customerId=` | Per-customer tile status summary + tile list |
+| `GET /catalog/tiles?status=pending` | List global catalog tiles |
+
+**Coverage is NOT filtered by `region_id` on segments** — global catalog, global spatial queries.
+
+Ingest response includes a `catalog` block: `{ required_tiles, new, existing, skipped_ready, tile_scheme, catalog_version }`.
+
+### 5. Stable ID conventions
+
+Defined in `backend/app/db/segment_ids.py`:
+
+```python
+make_segment_id(way_id, node_a, node_b)  # -> "osm:123:456:789" (nodes sorted)
+make_region_id(lat, lon)                 # -> "reg_{hash12}"
+make_activity_id(customer_id, hash_sig)
+make_tile_id(tile_scheme, lat_idx, lon_idx)
+```
+
+Segment IDs must be **global** and based on full OSM way/node topology — not clipped tile geometry (enforced when OSM build is implemented).
+
+### 6. Legacy flows still working
+
+These were **not** fully rewired to the segment-centric model:
+
+- Map page loads all activities (no `customer_id` filter in UI yet).
+- Map-match writes `*_matched.json` per activity, not `activity_segment_usage`.
+- Export uses per-activity GeoJSON.
+- `network_segments` table is **empty** — no OSM build yet.
+
+GraphHopper multi-state routing (PA/NY/NJ/FL) unchanged — see [MAPMATCH_IMPROVEMENTS.md](MAPMATCH_IMPROVEMENTS.md).
+
+### 7. Known data state after test ingest
+
+Example customer `test_20260611_1634`: **68 catalog tiles**, all `pending`, `catalog_complete: false`. Geography spans FL, GA, NC, PA/Lehigh Valley, NYC, upstate NY — typical for a large Garmin export.
 
 ---
 
-## Typical Workflow
+## Roadmap — Next Steps (in order)
+
+| # | Task | Status |
+|---|------|--------|
+| 1 | Geospatial schema + SpatiaLite | **Done** |
+| 2 | Region clustering at ingest | **Done** |
+| 3 | Catalog tiles + coverage API | **Done** |
+| 4 | **OSM catalog build worker** — fetch `fetch_bbox` per pending tile, populate `network_segments`, mark tile `ready` | **Next** |
+| 5 | Map-match → segment ID sequences + `activity_segment_usage` | Pending |
+| 6 | Populate `segment_stats` | Pending |
+| 7 | Aggregation APIs (segment heatmap, usage) | Pending |
+| 8 | Segment-centric map visualization | Pending |
+| 9 | Export from aggregated segments | Pending |
+| 10 | Update docs / frontend (customer filter, coverage UI) | Pending |
+
+**Suggested v1 proof for Task 4:** Build catalog for one Lehigh Valley tile (~40.6°N, 75.5°W), then map-match one activity and query segment stats.
+
+**OSM source options for Task 4:**
+
+- Clip from existing state `.osm.pbf` files (PA/NY/NJ/FL — already used by GraphHopper), or
+- Overpass API per tile `fetch_bbox`.
+
+Prefer PBF clip where tiles fall inside a known extract (faster for 68 tiles).
+
+---
+
+## API Reference (current)
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /healthz` | Health check |
+| `POST /ingest` | Ingest with `{ sourceUri, customerId, customerName? }` |
+| `GET /ingest/progress` | In-process ingest progress |
+| `GET /activities?customer_id=&region_id=` | List activities (filters optional) |
+| `GET /activities/{id}/geojson?variant=matched` | Activity GeoJSON |
+| `GET /regions` | List region clusters |
+| `GET /catalog/coverage?customerId=` | Catalog tile coverage for customer |
+| `GET /catalog/tiles?status=` | List catalog tiles |
+| `POST /mapmatch` | GraphHopper map-match (legacy) |
+| `POST /export` | GeoJSON / SVG export (legacy) |
+| `GET /inspect` | GraphHopper snap debug |
+
+Interactive docs: http://localhost:8000/docs
+
+---
+
+## Key Files (segment-centric work)
+
+| Path | Role |
+|------|------|
+| `backend/app/api/routes_ingest.py` | Multi-customer ingest, clustering, tile registration |
+| `backend/app/api/routes_catalog.py` | Coverage + tile listing |
+| `backend/app/api/routes_regions.py` | Region listing |
+| `backend/app/core/catalog_tiles.py` | Tile grid math + config |
+| `backend/app/core/region_cluster.py` | Activity clustering |
+| `backend/app/db/catalog_tiles.py` | `CatalogTileRepository` |
+| `backend/app/db/models.py` | All ORM models |
+| `backend/app/db/migrate.py` | Bootstrap + legacy hash_sig fix |
+| `backend/app/db/repositories.py` | Region + Segment repositories |
+| `backend/app/db/segment_ids.py` | ID conventions |
+| `backend/app/db/sync.py` | Remove stale customer activities |
+| `backend/SCHEMA.md` | Schema reference |
+| `frontend/src/pages/Home.tsx` | Customer ID + ingest UI |
+
+**Tests:** `backend/test_catalog_tiles.py`, `test_region_cluster.py`, `test_customer_ids.py`, `test_ingest_paths.py`, `test_parse_tcx.py`
+
+---
+
+## Typical Workflow (today)
 
 ```
-Local GPX/FIT folder
+Local GPX/FIT/TCX folder + customerId
         │
         ▼
-  POST /ingest  ──►  SQLite DB + GeoJSON cache
+  POST /ingest  ──►  activities + regions + catalog_tiles (pending)
         │
         ▼
-  GET /activities + /geojson  ──►  Map view (raw routes)
+  GET /catalog/coverage  ──►  which tiles need OSM build?
         │
         ▼
-  POST /mapmatch  ──►  GraphHopper (state auto-detected)
+  [NOT BUILT YET] OSM build per tile  ──►  network_segments (ready)
         │
         ▼
-  *_matched.json  ──►  Map view (snapped routes)
+  GET /activities + /geojson  ──►  Map view (raw routes, legacy)
         │
         ▼
-  POST /export  ──►  snapped.svg (+ GeoJSON option)
+  POST /mapmatch  ──►  GraphHopper  ──►  *_matched.json (legacy)
+        │
+        ▼
+  POST /export  ──►  snapped.svg
 ```
+
+## Typical Workflow (target)
+
+```
+POST /ingest  ──►  catalog_tiles pending
+POST /catalog/build (TBD)  ──►  network_segments, tiles ready
+POST /mapmatch  ──►  activity_segment_usage
+Refresh segment_stats  ──►  GET aggregation APIs  ──►  segment heatmap map + export
+```
+
+---
+
+## Architecture Diagram
+
+```
+route-viewer/
+├── frontend/          React + Vite + Leaflet (port 5173)
+├── backend/           FastAPI + SQLite/SpatiaLite (port 8000)
+│   ├── app/core/      parse, geo, region_cluster, catalog_tiles
+│   ├── app/db/        models, migrations, spatial adapter
+│   └── migrations/    numbered SQL migrations
+├── graphhopper/       Per-state map-matching configs
+└── .data/app.db       SQLite + spatial tables (gitignored)
+```
+
+| Service | Port |
+|---------|------|
+| Frontend | 5173 |
+| Backend | 8000 |
+| GraphHopper PA / NY / NJ / FL | 8989 / 8988 / 8987 / 8986 |
+
+---
 
 ## Related Documentation
 
-See [MAPMATCH_IMPROVEMENTS.md](MAPMATCH_IMPROVEMENTS.md) for detailed notes on map-matching quality improvements, GPS accuracy defaults, excursion cleanup, and the multi-state GraphHopper architecture.
+- [MAPMATCH_IMPROVEMENTS.md](MAPMATCH_IMPROVEMENTS.md) — GraphHopper map-matching quality, multi-state servers.
+- [backend/SCHEMA.md](backend/SCHEMA.md) — Database tables, spatial adapter, segment IDs.

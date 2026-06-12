@@ -64,3 +64,26 @@ def buffer_bbox(
 
 def bbox_to_string(bbox: tuple[float, float, float, float]) -> str:
     return ",".join(str(v) for v in bbox)
+
+
+def bearing_deg(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    """Initial bearing in degrees [0, 360) from point 1 to point 2."""
+    lat1_r = math.radians(lat1)
+    lat2_r = math.radians(lat2)
+    dlon = math.radians(lon2 - lon1)
+    x = math.sin(dlon) * math.cos(lat2_r)
+    y = math.cos(lat1_r) * math.sin(lat2_r) - math.sin(lat1_r) * math.cos(lat2_r) * math.cos(dlon)
+    return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
+
+
+def angle_diff_deg(a: float, b: float) -> float:
+    """Smallest difference between two bearings in degrees [0, 180]."""
+    d = abs(a - b) % 360.0
+    return min(d, 360.0 - d)
+
+
+def bearing_match_deg(gps_bearing: float, segment_bearing: float) -> float:
+    """Min angle between GPS heading and segment direction (either travel sense)."""
+    fwd = angle_diff_deg(gps_bearing, segment_bearing)
+    rev = angle_diff_deg(gps_bearing, (segment_bearing + 180.0) % 360.0)
+    return min(fwd, rev)

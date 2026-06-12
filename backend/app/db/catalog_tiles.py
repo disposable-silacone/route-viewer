@@ -103,6 +103,73 @@ class CatalogTileRepository:
         }
         return self._coverage_from_ids(tile_ids, rows, cfg)
 
+    def list_buildable(
+        self,
+        *,
+        limit: int = 1,
+        tile_scheme: str | None = None,
+        status: TileStatus = "pending",
+    ) -> list[CatalogTile]:
+        return self.list_buildable_statuses(
+            limit=limit,
+            tile_scheme=tile_scheme,
+            statuses=[status],
+        )
+
+    def list_buildable_statuses(
+        self,
+        *,
+        limit: int = 1,
+        tile_scheme: str | None = None,
+        statuses: list[TileStatus] | tuple[TileStatus, ...] = ("failed", "pending"),
+    ) -> list[CatalogTile]:
+        """Return up to `limit` tiles, preferring earlier statuses (failed before pending)."""
+        cfg = get_tile_config()
+        scheme = tile_scheme or cfg.tile_scheme
+        picked: list[CatalogTile] = []
+        for status in statuses:
+            if len(picked) >= limit:
+                break
+            stmt = (
+                select(CatalogTile)
+                .where(CatalogTile.status == status)
+                .order_by(CatalogTile.updated_at.asc())
+                .limit(max(1, limit - len(picked)))
+            )
+            if scheme:
+                stmt = stmt.where(CatalogTile.tile_scheme == scheme)
+            picked.extend(self._db.scalars(stmt).all())
+        return picked[:limit]
+
+    def mark_building(self, tile_id: str) -> CatalogTile | None:
+        row = self.get(tile_id)
+        if not row:
+            return None
+        row.status = "building"
+        row.error_message = None
+        row.updated_at = datetime.utcnow()
+        return row
+
+    def mark_ready(self, tile_id: str, *, segment_count: int) -> CatalogTile | None:
+        row = self.get(tile_id)
+        if not row:
+            return None
+        row.status = "ready"
+        row.segment_count = segment_count
+        row.built_at = datetime.utcnow()
+        row.error_message = None
+        row.updated_at = datetime.utcnow()
+        return row
+
+    def mark_failed(self, tile_id: str, error: str) -> CatalogTile | None:
+        row = self.get(tile_id)
+        if not row:
+            return None
+        row.status = "failed"
+        row.error_message = error[:2000]
+        row.updated_at = datetime.utcnow()
+        return row
+
     def refresh_segment_count(self, tile_id: str) -> int | None:
         """Diagnostic: count global segments intersecting the tile core bbox."""
         row = self.get(tile_id)
@@ -204,6 +271,7 @@ class CatalogTileRepository:
             "lon_idx": ref.lon_idx,
             "status": status,
             "segment_count": row.segment_count if row else None,
+            "error_message": row.error_message if row else None,
             "bbox": list(ref.bbox),
             "fetch_bbox": list(ref.fetch_bbox),
         }

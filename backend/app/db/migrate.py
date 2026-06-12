@@ -100,11 +100,28 @@ def _backfill_legacy_customer_id(db_engine: Engine) -> None:
         conn.commit()
 
 
+def _ensure_match_qa_columns(db_engine: Engine) -> None:
+    columns = {
+        "matched_at": "DATETIME",
+        "match_diagnostics": "TEXT",
+    }
+    with db_engine.connect() as conn:
+        existing = {
+            row[1]
+            for row in conn.execute(text("PRAGMA table_info(activities)")).fetchall()
+        }
+        for col, col_type in columns.items():
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE activities ADD COLUMN {col} {col_type}"))
+        conn.commit()
+
+
 def bootstrap_database(db_engine: Engine | None = None) -> None:
     """Initialize spatial metadata, ORM tables, spatial indexes, and SQL migrations."""
     target = db_engine or engine
     initialize_database(target)
     _ensure_activity_cache_columns(target)
+    _ensure_match_qa_columns(target)
     apply_sql_migrations(target)
     _drop_global_hash_sig_uniqueness(target)
     _backfill_legacy_customer_id(target)
