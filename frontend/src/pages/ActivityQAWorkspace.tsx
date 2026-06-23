@@ -17,6 +17,7 @@ import {
   fetchActivityQA,
   fetchCatalogCoverage,
   fetchCustomers,
+  fetchSegmentGeojson,
   formatDate,
   formatDateTime,
   formatKm,
@@ -30,19 +31,27 @@ import { useDebounced } from '../hooks/useDebounced'
 
 const CUSTOMER_STORAGE_KEY = 'routeViewer.lastCustomer'
 
-const FitToFeatures: React.FC<{ features: any[] }> = ({ features }) => {
+const FitToFeatures: React.FC<{ features: any[]; fitKey: string }> = ({
+  features,
+  fitKey,
+}) => {
   const map = useMap()
-  const lastKeyRef = useRef<string | null>(null)
+  const lastBoundsKeyRef = useRef<string | null>(null)
+  const lastFitKeyRef = useRef<string | null>(null)
   useEffect(() => {
+    if (lastFitKeyRef.current !== fitKey) {
+      lastFitKeyRef.current = fitKey
+      lastBoundsKeyRef.current = null
+    }
     if (!features.length) return
     const layer = L.geoJSON({ type: 'FeatureCollection', features } as any)
     const bounds = layer.getBounds()
     if (!bounds.isValid()) return
-    const key = bounds.toBBoxString()
-    if (lastKeyRef.current === key) return
-    lastKeyRef.current = key
+    const boundsKey = bounds.toBBoxString()
+    if (lastBoundsKeyRef.current === boundsKey) return
+    lastBoundsKeyRef.current = boundsKey
     map.fitBounds(bounds, { padding: [32, 32] })
-  }, [features, map])
+  }, [features, fitKey, map])
   return null
 }
 
@@ -101,6 +110,8 @@ export const ActivityQAWorkspace: React.FC = () => {
   const [qa, setQa] = useState<ActivityQA | null>(null)
   const [segmentsOpen, setSegmentsOpen] = useState(false)
   const [segmentRefreshKey, setSegmentRefreshKey] = useState(0)
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
+  const [highlightFeatures, setHighlightFeatures] = useState<any[]>([])
   const [copyMsg, setCopyMsg] = useState<string | null>(null)
 
   useEffect(() => {
@@ -205,7 +216,9 @@ export const ActivityQAWorkspace: React.FC = () => {
     const failed = row.status === 'failed'
     setMatchError(failed)
     setMatchMessage(
-      failed ? formatMatchError(row) : `Match ${row.status} — ${row.segment_count ?? '?'} unique segments`
+      failed
+        ? formatMatchError(row)
+        : `${row.status === 'partial' ? 'Partial match' : 'Match'} ${row.status} — ${row.segment_count ?? '?'} unique segments`
     )
     if (failed) return
 
@@ -236,6 +249,8 @@ export const ActivityQAWorkspace: React.FC = () => {
       setRawFeatures([])
       setMatchedFeatures([])
       setQa(null)
+      setSelectedSegmentId(null)
+      setHighlightFeatures([])
       return
     }
     let cancelled = false
@@ -270,6 +285,25 @@ export const ActivityQAWorkspace: React.FC = () => {
   }, [focusedId, layer])
 
   useEffect(() => {
+    if (!selectedSegmentId) {
+      setHighlightFeatures([])
+      return
+    }
+    let cancelled = false
+    setHighlightFeatures([])
+    fetchSegmentGeojson(selectedSegmentId)
+      .then((feature) => {
+        if (!cancelled) setHighlightFeatures([feature])
+      })
+      .catch(() => {
+        if (!cancelled) setHighlightFeatures([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedSegmentId])
+
+  useEffect(() => {
     const params = new URLSearchParams()
     if (customerId) params.set('customer', customerId)
     if (focusedId) params.set('activity', focusedId)
@@ -295,6 +329,7 @@ export const ActivityQAWorkspace: React.FC = () => {
   const focused = focusedIndex >= 0 ? activities[focusedIndex] : null
 
   const goPrev = useCallback(() => {
+    setSelectedSegmentId(null)
     setFocusedId((current) => {
       const idx = activities.findIndex((a) => a.id === current)
       if (idx > 0) return activities[idx - 1].id
@@ -303,6 +338,7 @@ export const ActivityQAWorkspace: React.FC = () => {
   }, [activities])
 
   const goNext = useCallback(() => {
+    setSelectedSegmentId(null)
     setFocusedId((current) => {
       const idx = activities.findIndex((a) => a.id === current)
       if (idx >= 0 && idx < activities.length - 1) return activities[idx + 1].id
@@ -334,13 +370,6 @@ export const ActivityQAWorkspace: React.FC = () => {
 
   const handleMatch = async () => {
     if (!focusedId) return
-    if (catalog && !catalog.catalog_complete) {
-      setMatchError(true)
-      setMatchMessage(
-        `Catalog incomplete (${catalog.ready_tiles}/${catalog.required_tiles} tiles ready). Build pending tiles first.`
-      )
-      return
-    }
     setMatching(true)
     setMatchMessage(null)
     setMatchError(false)
@@ -641,6 +670,7 @@ export const ActivityQAWorkspace: React.FC = () => {
               {layer === 'raw' || layer === 'both' ? (
                 rawFeatures.length > 0 && (
                   <GeoJSON
+                    key={`raw-${focusedId ?? 'none'}-${layer}`}
                     data={{ type: 'FeatureCollection', features: rawFeatures } as any}
                     pathOptions={{ color: '#ff5a1f', weight: 3, opacity: 0.85 }}
                   />
@@ -649,6 +679,7 @@ export const ActivityQAWorkspace: React.FC = () => {
               {layer === 'matched' || layer === 'both' ? (
                 matchedFeatures.length > 0 && (
                   <GeoJSON
+                    key={`matched-${focusedId ?? 'none'}-${layer}`}
                     data={{ type: 'FeatureCollection', features: matchedFeatures } as any}
                     pathOptions={{
                       color: '#1479ff',
@@ -658,7 +689,25 @@ export const ActivityQAWorkspace: React.FC = () => {
                   />
                 )
               ) : null}
-              <FitToFeatures features={mapFeatures} />
+              {highlightFeatures.length > 0 && selectedSegmentId && (
+                <GeoJSON
+                  key={`highlight-${selectedSegmentId}`}
+                  data={{ type: 'FeatureCollection', features: highlightFeatures } as any}
+                  pathOptions={{
+                    color: '#ca8a04',
+                    weight: 8,
+                    opacity: 1,
+                  }}
+                />
+              )}
+              <FitToFeatures
+                fitKey={
+                  selectedSegmentId
+                    ? `seg-${selectedSegmentId}`
+                    : `act-${focusedId ?? 'none'}-${layer}`
+                }
+                features={highlightFeatures.length > 0 ? highlightFeatures : mapFeatures}
+              />
             </MapContainer>
           </div>
 
@@ -708,7 +757,7 @@ export const ActivityQAWorkspace: React.FC = () => {
               </dl>
             )}
             <div className="qa-panel-foot muted">
-              Open Segments for ordered usage list · issue flags coming next
+              Open Segments and click a row to highlight that route on the map
             </div>
           </section>
           </div>
@@ -717,6 +766,8 @@ export const ActivityQAWorkspace: React.FC = () => {
             open={segmentsOpen}
             onClose={() => setSegmentsOpen(false)}
             refreshKey={segmentRefreshKey}
+            selectedSegmentId={selectedSegmentId}
+            onSelectSegment={setSelectedSegmentId}
           />
         </main>
       </div>

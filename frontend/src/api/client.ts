@@ -92,6 +92,12 @@ export async function fetchActivitySegments(activityId: string): Promise<Activit
   return res.json()
 }
 
+export async function fetchSegmentGeojson(segmentId: string): Promise<{ type: string; geometry: unknown; properties?: Record<string, unknown> }> {
+  const res = await fetch(`${API_BASE}/segments/${encodeURIComponent(segmentId)}/geojson`)
+  if (!res.ok) throw new Error('Segment geometry not found')
+  return res.json()
+}
+
 /** ISO datetime for API `start` / `end` query params from a date input (YYYY-MM-DD). */
 export function dateFilterToStart(isoDate: string): string {
   return `${isoDate}T00:00:00`

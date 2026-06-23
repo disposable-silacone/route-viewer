@@ -11,6 +11,8 @@ type Props = {
   open: boolean
   onClose: () => void
   refreshKey?: number
+  selectedSegmentId: string | null
+  onSelectSegment: (segmentId: string | null) => void
 }
 
 function shortSegmentId(id: string): string {
@@ -23,16 +25,16 @@ export const SegmentDrawer: React.FC<Props> = ({
   open,
   onClose,
   refreshKey = 0,
+  selectedSegmentId,
+  onSelectSegment,
 }) => {
   const [data, setData] = useState<ActivitySegments | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open || !activityId) {
       setData(null)
-      setSelectedId(null)
       return
     }
     let cancelled = false
@@ -93,13 +95,13 @@ export const SegmentDrawer: React.FC<Props> = ({
             </thead>
             <tbody>
               {segments.map((row: SegmentUsageRow, idx: number) => {
-                const active = row.segment_id === selectedId
+                const active = row.segment_id === selectedSegmentId
                 return (
                   <tr
                     key={row.segment_id}
                     className={active ? 'selected' : undefined}
                     onClick={() =>
-                      setSelectedId(active ? null : row.segment_id)
+                      onSelectSegment(active ? null : row.segment_id)
                     }
                     title={row.segment_id}
                   >
@@ -116,7 +118,9 @@ export const SegmentDrawer: React.FC<Props> = ({
         </div>
       )}
       <div className="qa-panel-foot muted">
-        Row select reserved for map highlight & issue flags.
+        {selectedSegmentId
+          ? 'Selected segment highlighted on map · click row again to clear'
+          : 'Click a row to highlight that street segment on the map'}
       </div>
     </aside>
   )

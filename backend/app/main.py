@@ -13,6 +13,7 @@ from app.api.routes_inspect import router as inspect_router
 from app.api.routes_regions import router as regions_router
 from app.api.routes_catalog import router as catalog_router
 from app.api.routes_customers import router as customers_router
+from app.api.routes_segments import router as segments_router
 from app.db.migrate import bootstrap_database
 
 
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(regions_router, prefix="/regions", tags=["regions"])
     app.include_router(catalog_router, prefix="/catalog", tags=["catalog"])
     app.include_router(customers_router, prefix="/customers", tags=["customers"])
+    app.include_router(segments_router, prefix="/segments", tags=["segments"])
 
     @app.on_event("startup")
     def _create_tables() -> None:
